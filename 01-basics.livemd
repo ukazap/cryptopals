@@ -148,7 +148,7 @@ FA.score("A quick brown fox") > FA.score("etaoin shrdlu!")
 
 ```elixir
 defmodule XorCipher.Guess do
-  defstruct [:ciphertext, key: nil, plaintext: nil, score: :infinity]
+  defstruct [:ciphertext, :key, :plaintext, :score]
 
   alias __MODULE__
 
