@@ -1,2 +1,2 @@
 # cryptopals
-Solutions to the Cryptopals crypto challenge in Elixir (Livebook).
+Solutions to the [Cryptopals](https://cryptopals.com/) crypto challenge in Elixir (Livebook).
