@@ -240,6 +240,10 @@ RepeatingKeyXorCipher.encrypt(plaintext, "ICE") == expected_ciphertext
 
 ```elixir
 defmodule HammingDistance do
+  def calculate([string_a, string_b]) do
+    calculate(string_a, string_b)
+  end
+
   def calculate(string_a, string_b) do
     xored = :crypto.exor(string_a, string_b)
     Enum.sum(for <<bit::1 <- xored>>, do: bit)
@@ -275,7 +279,7 @@ key_stats =
 
     sum_distance =
       pairs
-      |> Enum.map(fn [a, b] -> HammingDistance.calculate(a, b) end)
+      |> Enum.map(&HammingDistance.calculate/2)
       |> Enum.sum()
 
     average_distance = sum_distance / Enum.count(pairs)
