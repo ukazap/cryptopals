@@ -1,0 +1,334 @@
+# Cryptopals 1: Basics
+
+```elixir
+Mix.install([
+  {:kino, "~> 0.12.3"},
+  {:benchee, "~> 1.3"},
+  {:req, "~> 0.4.11"},
+  {:combination, "~> 0.0.3"}
+])
+```
+
+## Convert hex to base64
+
+```elixir
+defmodule BaseConversion do
+  def hex_to_base64!(hex) when is_binary(hex) do
+    hex
+    |> Base.decode16!(case: :mixed)
+    |> Base.encode64()
+  end
+end
+```
+
+```elixir
+import BaseConversion
+
+base64 =
+  hex_to_base64!(
+    "49276d206b696c6c696e6720796f757220627261696e206c696b65206120706f69736f6e6f7573206d757368726f6f6d"
+  )
+
+"SSdtIGtpbGxpbmcgeW91ciBicmFpbiBsaWtlIGEgcG9pc29ub3VzIG11c2hyb29t" = base64
+```
+
+## Fixed XOR
+
+```elixir
+# This is for exercise purpose and I won't use any of them because
+# Erlang has already provided :crypto.exor/2
+
+defmodule SameLengthXOR do
+  def xor(string_a, string_b) do
+    a = Base.decode16!(string_a, case: :mixed)
+    b = Base.decode16!(string_b, case: :mixed)
+    :crypto.exor(a, b) |> Base.encode16(case: :lower)
+  end
+
+  def xor2(string_a, string_b) do
+    a = Base.decode16!(string_a, case: :mixed) |> :erlang.binary_to_list()
+    b = Base.decode16!(string_b, case: :mixed) |> :erlang.binary_to_list()
+
+    Enum.zip(a, b)
+    |> Enum.map(fn {x, y} -> Bitwise.bxor(x, y) end)
+    |> :erlang.list_to_binary()
+    |> Base.encode16(case: :lower)
+  end
+
+  def xor3(string_a, string_b) do
+    a = Base.decode16!(string_a, case: :mixed)
+    b = Base.decode16!(string_b, case: :mixed)
+    xor3(a, b, [])
+  end
+
+  def xor3(<<>>, _, acc), do: xor3done(acc)
+  def xor3(_, <<>>, acc), do: xor3done(acc)
+
+  def xor3(<<head_a, rest_a::binary>>, <<head_b, rest_b::binary>>, acc) do
+    acc = [acc | [Bitwise.bxor(head_a, head_b)]]
+    xor3(rest_a, rest_b, acc)
+  end
+
+  def xor3done(acc) do
+    acc
+    |> :erlang.list_to_binary()
+    |> Base.encode16(case: :lower)
+  end
+
+  def xor4(string_a, string_b) do
+    a = Base.decode16!(string_a, case: :mixed)
+    b = Base.decode16!(string_b, case: :mixed)
+    xor4(a, b, <<>>)
+  end
+
+  def xor4(<<>>, _, acc), do: Base.encode16(acc, case: :lower)
+  def xor4(_, <<>>, acc), do: Base.encode16(acc, case: :lower)
+
+  def xor4(<<head_a, rest_a::binary>>, <<head_b, rest_b::binary>>, acc) do
+    acc = acc <> <<Bitwise.bxor(head_a, head_b)>>
+    xor4(rest_a, rest_b, acc)
+  end
+end
+```
+
+```elixir
+a = "1c0111001f010100061a024b53535009181c"
+b = "686974207468652062756c6c277320657965"
+
+"746865206b696420646f6e277420706c6179" = SameLengthXOR.xor(a, b)
+"746865206b696420646f6e277420706c6179" = SameLengthXOR.xor2(a, b)
+"746865206b696420646f6e277420706c6179" = SameLengthXOR.xor3(a, b)
+"746865206b696420646f6e277420706c6179" = SameLengthXOR.xor4(a, b)
+```
+
+```elixir
+# Benchee.run(%{
+#   xor: fn -> SameLengthXOR.xor(a, b) end,
+#   xor2: fn -> SameLengthXOR.xor2(a, b) end,
+#   xor3: fn -> SameLengthXOR.xor3(a, b) end,
+#   xor4: fn -> SameLengthXOR.xor4(a, b) end
+# })
+```
+
+## Single-byte XOR cipher
+
+```elixir
+defmodule FrequencyAnalysis do
+  # Twenty Thousand Leagues under the Sea
+  # by Jules Verne.
+  @frequencies "https://gutenberg.org/cache/epub/164/pg164.txt"
+               |> Req.get!()
+               |> Map.get(:body)
+               |> String.replace(~r/[^a-z ]/, "")
+               |> to_charlist()
+               |> Enum.frequencies()
+
+  # Calculates the English-ness of the text.
+  def score(binary) do
+    actual_frequencies =
+      binary
+      |> :erlang.binary_to_list()
+      |> Enum.frequencies()
+
+    Enum.reduce(@frequencies, 0.0, fn {char, expected_frequency}, errors ->
+      actual_frequency = Map.get(actual_frequencies, char, 0)
+      error = abs(expected_frequency - actual_frequency)
+      errors - error
+    end)
+  end
+
+  def frequencies, do: @frequencies
+end
+```
+
+```elixir
+alias FrequencyAnalysis, as: FA
+FA.score("A quick brown fox") > FA.score("etaoin shrdlu!")
+```
+
+```elixir
+defmodule XorCipher.Guess do
+  defstruct [:ciphertext, key: nil, plaintext: nil, score: :infinity]
+
+  alias __MODULE__
+
+  def perform(ciphertext, key) do
+    mask = String.duplicate(<<key>>, byte_size(ciphertext))
+    plaintext = :crypto.exor(ciphertext, mask)
+
+    %Guess{
+      ciphertext: ciphertext,
+      key: key,
+      plaintext: plaintext,
+      score: FrequencyAnalysis.score(plaintext)
+    }
+  end
+end
+```
+
+```elixir
+defmodule XorCipher do
+  alias XorCipher.Guess
+
+  def crack(ciphertext) do
+    0..255
+    |> Enum.map(&Guess.perform(ciphertext, &1))
+    |> Enum.max_by(& &1.score)
+  end
+end
+```
+
+```elixir
+"1b37373331363f78151b7f2b783431333d78397828372d363c78373e783a393b3736"
+|> Base.decode16!(case: :mixed)
+|> XorCipher.crack()
+```
+
+## Detect single-character XOR
+
+```elixir
+"https://cryptopals.com/static/challenge-data/4.txt"
+|> Req.get!()
+|> Map.get(:body)
+|> String.split()
+|> Enum.map(fn line ->
+  line
+  |> Base.decode16!(case: :mixed)
+  |> XorCipher.crack()
+end)
+|> Enum.max_by(& &1.score)
+```
+
+## Implement repeating-key XOR
+
+```elixir
+defmodule RepeatingKeyXorCipher do
+  def encrypt(plaintext, binkey) when is_binary(binkey) do
+    encrypt(plaintext, :erlang.binary_to_list(binkey))
+  end
+
+  def encrypt(plaintext, key) do
+    mask =
+      key
+      |> Stream.cycle()
+      |> Enum.take(byte_size(plaintext))
+
+    :crypto.exor(plaintext, mask)
+  end
+
+  def decrypt(ciphertext, key) do
+    encrypt(ciphertext, key)
+  end
+end
+```
+
+```elixir
+plaintext = "Burning 'em, if you ain't quick and nimble\nI go crazy when I hear a cymbal"
+
+expected_ciphertext =
+  """
+  0b3637272a2b2e63622c2e69692a23693a2a3c6324202d623d63343c2a26226324272765272
+  a282b2f20430a652e2c652a3124333a653e2b2027630c692b20283165286326302e27282f
+  """
+  |> String.replace(~r/\s/, "")
+  |> Base.decode16!(case: :mixed)
+
+RepeatingKeyXorCipher.encrypt(plaintext, "ICE") == expected_ciphertext
+```
+
+## Break repeating-key XOR
+
+```elixir
+defmodule HammingDistance do
+  def calculate(string_a, string_b) do
+    xored = :crypto.exor(string_a, string_b)
+    Enum.sum(for <<bit::1 <- xored>>, do: bit)
+  end
+end
+```
+
+```elixir
+HammingDistance.calculate("this is a test", "wokka wokka!!!") == 37
+```
+
+```elixir
+ciphertext =
+  "https://cryptopals.com/static/challenge-data/6.txt"
+  |> Req.get!()
+  |> Map.fetch!(:body)
+  |> String.replace(~r/\s/, "")
+  |> Base.decode64!()
+```
+
+```elixir
+key_stats =
+  Enum.map(2..40, fn key_size ->
+    <<
+      first::binary-size(key_size),
+      second::binary-size(key_size),
+      third::binary-size(key_size),
+      forth::binary-size(key_size),
+      _rest::binary
+    >> = ciphertext
+
+    pairs = Combination.combine([first, second, third, forth], 2)
+
+    sum_distance =
+      pairs
+      |> Enum.map(fn [a, b] -> HammingDistance.calculate(a, b) end)
+      |> Enum.sum()
+
+    average_distance = sum_distance / Enum.count(pairs)
+
+    %{
+      key_size: key_size,
+      normalized_edit_distance: average_distance / key_size
+    }
+  end)
+
+best_key_sizes =
+  key_stats
+  |> Enum.sort_by(& &1.normalized_edit_distance)
+  |> Enum.take(3)
+```
+
+```elixir
+solved =
+  best_key_sizes
+  |> Enum.map(fn %{key_size: key_size} ->
+    # transpose the blocks:
+    # make a block that is the first byte of every block,
+    # and a block that is the second byte of every block, and so on.
+    buckets =
+      for <<block::binary-size(key_size) <- ciphertext>>, reduce: %{} do
+        buckets ->
+          1..key_size
+          |> Enum.reduce({block, buckets}, fn nth_byte, {remaining, buckets} ->
+            <<byte, remaining::binary>> = remaining
+            bucket = Map.get(buckets, nth_byte, <<>>) <> <<byte>>
+            buckets = Map.put(buckets, nth_byte, bucket)
+            {remaining, buckets}
+          end)
+          |> elem(1)
+      end
+
+    # Solve each block as single-character XOR cipher.
+    key =
+      Enum.map(buckets, fn {_, bucket} ->
+        bucket |> XorCipher.crack() |> Map.get(:key)
+      end)
+
+    plaintext = RepeatingKeyXorCipher.decrypt(ciphertext, key)
+
+    %{
+      key: key,
+      plaintext: plaintext,
+      score: FrequencyAnalysis.score(plaintext)
+    }
+  end)
+  |> Enum.max_by(& &1.score)
+```
+
+```elixir
+Kino.Text.new(solved.plaintext)
+```
